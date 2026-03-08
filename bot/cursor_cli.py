@@ -62,7 +62,7 @@ class CursorCLI:
         if self.provider == "cursor":
             async for line in self._execute_cursor(prompt, force, timeout):
                 yield line
-        elif self.provider in ("openai", "anthropic", "custom"):
+        elif self.provider in ("openai", "anthropic", "grok", "custom"):
             async for line in self._execute_custom_llm(prompt, timeout):
                 yield line
         else:

@@ -377,7 +377,9 @@ def _build_agent_cli(agent_name: str, project_dir: str) -> CursorCLI:
         CursorCLI instance configured for the agent.
     """
     if agent_name == "cursor":
+        # Use Cursor CLI directly
         return CursorCLI(project_dir=project_dir)
+    
     elif agent_name == "claude":
         # Use Anthropic API
         return CursorCLI(
@@ -385,20 +387,24 @@ def _build_agent_cli(agent_name: str, project_dir: str) -> CursorCLI:
             model="claude-3-5-sonnet-20241022",
             provider="anthropic"
         )
+    
     elif agent_name == "codex":
-        # Use OpenAI Codex
+        # Use OpenAI Codex API
         return CursorCLI(
             project_dir=project_dir,
             model="gpt-4o",
             provider="openai"
         )
+    
     elif agent_name == "grok":
-        # Use xAI Grok
+        # Use xAI Grok API
+        # Note: provider="grok" will make cursor_cli look for GROK_API_KEY and GROK_ENDPOINT
         return CursorCLI(
             project_dir=project_dir,
             model="grok-2",
-            provider="custom"
+            provider="grok"
         )
+    
     else:
         # Default to cursor
         return CursorCLI(project_dir=project_dir)
