@@ -366,39 +366,37 @@ async def _execute_agent_prompt(
         await status_msg.edit_text(f"❌ Unexpected error: {str(e)}")
 
 
-def _build_agent_cli(agent_name: str, project_dir: str) -> CursorCLI:
-    """Build a CursorCLI instance for the specified agent.
+def _build_agent_cli(agent_name: str, project_dir: str):
+    """Build the appropriate CLI instance for the specified agent.
     
     Args:
         agent_name: Name of the agent (cursor, claude, codex, grok).
         project_dir: The project directory.
         
     Returns:
-        CursorCLI instance configured for the agent.
+        CLI instance (CursorCLI, ClaudeCLI, CodexCLI, or GrokCLI).
     """
+    from bot.cursor_cli import CursorCLI
+    from bot.cli_claude import ClaudeCLI
+    from bot.cli_codex import CodexCLI
+    from bot.cli_grok import GrokCLI
+    
     if agent_name == "cursor":
+        # Use Cursor CLI wrapper
         return CursorCLI(project_dir=project_dir)
+    
     elif agent_name == "claude":
-        # Use Anthropic API
-        return CursorCLI(
-            project_dir=project_dir,
-            model="claude-3-5-sonnet-20241022",
-            provider="anthropic"
-        )
+        # Use Claude CLI wrapper
+        return ClaudeCLI(project_dir=project_dir)
+    
     elif agent_name == "codex":
-        # Use OpenAI Codex
-        return CursorCLI(
-            project_dir=project_dir,
-            model="gpt-4o",
-            provider="openai"
-        )
+        # Use Codex CLI wrapper
+        return CodexCLI(project_dir=project_dir)
+    
     elif agent_name == "grok":
-        # Use xAI Grok
-        return CursorCLI(
-            project_dir=project_dir,
-            model="grok-2",
-            provider="custom"
-        )
+        # Use Grok CLI wrapper (defaults to API)
+        return GrokCLI(project_dir=project_dir, use_api=True)
+    
     else:
         # Default to cursor
         return CursorCLI(project_dir=project_dir)
