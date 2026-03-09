@@ -1,4 +1,4 @@
-"""Grok CLI wrapper for executing prompts via the Grok agent."""
+"""Grok CLI wrapper for executing prompts via the Grok (MiniMax) agent."""
 
 import asyncio
 import logging
@@ -16,14 +16,13 @@ class GrokCLIError(Exception):
 
 
 class GrokCLI:
-    """Async wrapper around Grok CLI (grok) or xAI API."""
+    """Async wrapper around Grok CLI (using MiniMax)."""
 
     def __init__(
         self, 
         project_dir: Optional[str] = None, 
         model: Optional[str] = None,
-        force: bool = False,
-        use_api: bool = True
+        force: bool = False
     ):
         """Initialize the Grok CLI wrapper.
 
@@ -31,12 +30,10 @@ class GrokCLI:
             project_dir: Path to the project directory.
             model: Model to use (optional).
             force: Whether to allow file modifications.
-            use_api: If True, use xAI API. If False, try CLI.
         """
         self.project_dir = project_dir or config.get_default_project_dir()
-        self.model = model or "grok-2"
+        self.model = model or "MiniMax-M2.5"  # MiniMax recommended model
         self.force = force
-        self.use_api = use_api
 
     async def execute(
         self,
@@ -44,7 +41,7 @@ class GrokCLI:
         force: bool = False,
         timeout: Optional[float] = 300.0
     ) -> AsyncGenerator[str, None]:
-        """Execute a prompt using Grok CLI or API.
+        """Execute a prompt using Grok CLI.
 
         Args:
             prompt: The prompt to send.
@@ -52,83 +49,14 @@ class GrokCLI:
             timeout: Maximum time in seconds to wait for completion.
 
         Yields:
-            Output lines from CLI/API.
+            Output lines from CLI.
 
         Raises:
             GrokCLIError: If the execution fails.
         """
         use_force = force or self.force
-        
-        if self.use_api:
-            async for line in self._execute_api(prompt, timeout):
-                yield line
-        else:
-            async for line in self._execute_cli(prompt, use_force, timeout):
-                yield line
-
-    async def _execute_api(
-        self,
-        prompt: str,
-        timeout: float
-    ) -> AsyncGenerator[str, None]:
-        """Execute prompt using xAI API."""
-        import aiohttp
-        
-        if not config.grok_api_key:
-            raise GrokCLIError("GROK_API_KEY not configured. Add GROK_API_KEY to .env")
-        
-        endpoint = config.grok_endpoint or "https://api.x.ai/v1/chat/completions"
-        
-        headers = {
-            "Authorization": f"Bearer {config.grok_api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": True
-        }
-        
-        logger.info(f"[GROK] Sending prompt to xAI API (model: {self.model})")
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    endpoint,
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=timeout)
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        logger.error(f"[GROK] API error: {response.status} - {error_text}")
-                        raise GrokCLIError(f"API error: {response.status} - {error_text}")
-                    
-                    # Stream response
-                    async for line in response.content:
-                        if line:
-                            decoded = line.decode('utf-8')
-                            if decoded.startswith('data: '):
-                                data = decoded[6:]
-                                if data.strip() == '[DONE]':
-                                    break
-                                try:
-                                    import json
-                                    parsed = json.loads(data)
-                                    if 'choices' in parsed:
-                                        for choice in parsed['choices']:
-                                            if 'delta' in choice and 'content' in choice['delta']:
-                                                yield choice['delta']['content']
-                                except:
-                                    pass
-                    
-                    logger.info("[GROK] Response complete")
-                    
-        except ImportError:
-            raise GrokCLIError("aiohttp not installed. Run: pip install aiohttp")
-        except aiohttp.ClientError as e:
-            raise GrokCLIError(f"Connection error: {str(e)}")
+        async for line in self._execute_cli(prompt, use_force, timeout):
+            yield line
 
     async def _execute_cli(
         self,
@@ -138,15 +66,21 @@ class GrokCLI:
     ) -> AsyncGenerator[str, None]:
         """Execute prompt using Grok CLI."""
         cmd = self._build_command(prompt, force)
-        
+
         logger.info(f"[GROK] Sending prompt to Grok CLI (project: {self.project_dir}, force: {force})")
+        logger.info(f"[GROK] Command: {' '.join(cmd)}")
         logger.info(f"[GROK] Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
 
         env = os.environ.copy()
-        
-        # Set xAI API key if available
+
+        # Set Grok CLI env vars (used by @vibe-kit/grok-cli)
         if config.grok_api_key:
             env["GROK_API_KEY"] = config.grok_api_key
+        if config.grok_base_url:
+            env["GROK_BASE_URL"] = config.grok_base_url
+        # Set model via env var to override settings file
+        if self.model:
+            env["GROK_MODEL"] = self.model
 
         try:
             process = await asyncio.create_subprocess_exec(
@@ -170,9 +104,32 @@ class GrokCLI:
 
                 output = stdout.decode()
                 logger.info(f"[GROK] Received response from Grok ({len(output)} chars)")
-                
-                for line in output.splitlines():
-                    yield line
+
+                # Parse JSON output and extract content
+                # Grok CLI outputs JSON lines like: {"role":"assistant","content":"..."}
+                try:
+                    import json
+                    for line in output.strip().split('\n'):
+                        if line.startswith('{'):
+                            data = json.loads(line)
+                            role = data.get('role', '')
+                            content = data.get('content', '')
+                            
+                            # Skip tool calls and thinking blocks
+                            if role == 'tool':
+                                continue
+                            if role == 'assistant':
+                                # Remove thinking blocks (<think>...</think>)
+                                import re
+                                content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+                                if content:
+                                    yield content
+                                continue
+                        # Skip non-assistant lines
+                except json.JSONDecodeError:
+                    # If not JSON, just yield the raw output
+                    for line in output.splitlines():
+                        yield line
 
             except asyncio.TimeoutError:
                 process.kill()
@@ -181,10 +138,10 @@ class GrokCLI:
                 raise GrokCLIError(f"Grok CLI timed out after {timeout} seconds")
 
         except FileNotFoundError:
-            logger.error("[GROK] Grok CLI not found. Falling back to API.")
-            # Fall back to API
-            async for line in self._execute_api(prompt, timeout):
-                yield line
+            logger.error("[GROK] Grok CLI not found. Please install Grok CLI first.")
+            raise GrokCLIError(
+                "Grok CLI not found. Please install Grok CLI and ensure 'grok' is in your PATH."
+            )
 
     def _build_command(self, prompt: str, force: bool) -> list[str]:
         """Build the command list for Grok CLI.
@@ -196,7 +153,7 @@ class GrokCLI:
         Returns:
             List of command arguments.
         """
-        # Grok CLI command format (if available)
+        # Grok CLI command format - use --prompt (not -p) to avoid argument parsing issues
         cmd = ["grok"]
         
         if force:
@@ -205,21 +162,23 @@ class GrokCLI:
         if self.model:
             cmd.extend(["--model", self.model])
         
-        cmd.append(prompt)
+        # Use --prompt with = to properly pass the prompt
+        cmd.append(f"--prompt={prompt}")
         return cmd
 
     async def check_status(self) -> tuple[bool, str]:
-        """Check if Grok CLI or API is available.
+        """Check if Grok CLI is available.
 
         Returns:
             Tuple of (is_available, status_message).
         """
-        # Try CLI first
         try:
             cmd = ["grok", "--version"]
             env = os.environ.copy()
             if config.grok_api_key:
                 env["GROK_API_KEY"] = config.grok_api_key
+            if config.grok_base_url:
+                env["GROK_BASE_URL"] = config.grok_base_url
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -236,12 +195,14 @@ class GrokCLI:
             if process.returncode == 0:
                 version = stdout.decode().strip()
                 return True, f"Grok CLI is available. Version: {version}"
-                
-        except Exception:
-            pass
-        
-        # Fall back to API check
-        if config.grok_api_key:
-            return True, f"Grok API is configured (model: {self.model})"
-        
-        return False, "Grok CLI not found and API key not configured"
+            else:
+                return False, f"Grok CLI error: {stderr.decode().strip()}"
+
+        except FileNotFoundError:
+            return False, "Grok CLI not found. Please install Grok CLI."
+
+        except asyncio.TimeoutError:
+            return False, "Grok CLI check timed out"
+
+        except Exception as e:
+            return False, f"Error checking Grok CLI: {str(e)}"

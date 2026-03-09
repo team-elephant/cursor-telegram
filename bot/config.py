@@ -39,8 +39,15 @@ class Config:
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
         self.openai_endpoint = os.getenv("OPENAI_ENDPOINT", "https://api.openai.com/v1")
 
-        # Grok (xAI) CLI configuration
-        self.grok_api_key = os.getenv("GROK_API_KEY", "")
+        # Grok (MiniMax) CLI configuration
+        self.minimax_api_key = os.getenv("MINIMAX_API_KEY", "")
+        self.minimax_endpoint = os.getenv("MINIMAX_ENDPOINT", "https://api.minimax.io/v1")
+        
+        # Grok CLI env vars (used by @vibe-kit/grok-cli)
+        self.grok_api_key = os.getenv("GROK_API_KEY", os.getenv("MINIMAX_API_KEY", ""))
+        self.grok_base_url = os.getenv("GROK_BASE_URL", os.getenv("MINIMAX_ENDPOINT", "https://api.minimax.io/v1"))
+        
+        # Legacy xAI Grok - kept for backwards compatibility
         self.grok_endpoint = os.getenv("GROK_ENDPOINT", "https://api.x.ai/v1")
 
         # Runtime default project (can be changed with /project command)

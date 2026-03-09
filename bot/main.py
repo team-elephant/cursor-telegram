@@ -76,7 +76,7 @@ def main() -> None:
     # This handles tagged messages like @cursor, @claude, etc.
     application.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.IS_GROUP_MESSAGE,
+            filters.TEXT & ~filters.COMMAND & (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP),
             handlers.handle_group_message
         )
     )
@@ -84,7 +84,7 @@ def main() -> None:
     # Register message handler for direct messages (1-on-1)
     application.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.IS_PRIVATE_MESSAGE,
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
             handlers.handle_message
         )
     )

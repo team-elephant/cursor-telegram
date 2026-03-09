@@ -11,6 +11,9 @@ from telegram.ext import ContextTypes, MessageHandler, filters
 
 from bot.config import config
 from bot.cursor_cli import CursorCLI, CursorCLIError
+from bot.cli_claude import ClaudeCLIError
+from bot.cli_codex import CodexCLIError
+from bot.cli_grok import GrokCLIError
 from bot import keyboard
 from bot import callbacks
 from bot import groups as groups_module
@@ -39,20 +42,35 @@ AGENT_TAGS = {
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /start command - show main menu with buttons."""
+    """Handle /start command - show usage instructions."""
     if not _is_allowed_user(update):
         return
 
     welcome_text = """🎯 *Remote Cursor Bot*
 
-Control Cursor on your MacBook remotely from Telegram.
+Control AI coding agents (Cursor, Claude, Codex, Grok) from Telegram.
 
-Select an option below:"""
+*How to use:*
+
+1. *Link a project to a group:*
+   `/link /path/to/project`
+
+2. *Use agents in group chat:*
+   • `@cursor your prompt` - Use Cursor AI
+   • `@claude your prompt` - Use Claude AI  
+   • `@codex your prompt` - Use Codex AI
+   • `@grok your prompt` - Use Grok AI (MiniMax)
+
+3. *Commands:*
+   • `/status` - Show project status
+   • `/unlink` - Unlink project from group
+   • `/cancel` - Cancel current operation
+
+*Note:* The bot must be added to your Telegram group with privacy mode disabled."""
 
     await update.message.reply_text(
         welcome_text, 
-        parse_mode="Markdown", 
-        reply_markup=keyboard.main_menu_keyboard()
+        parse_mode="Markdown"
     )
 
 
@@ -284,25 +302,32 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     - @codex fix the bug
     - @grok explain this function
     """
+    logger.info(f"[GROUP] Received message: {update.message.text if update.message else 'No message'}")
+    
     if not update.message or not update.message.text:
+        logger.info("[GROUP] No message or text, returning")
         return
     
     # Must be from owner
     if not _is_owner(update):
+        logger.info(f"[GROUP] Not owner (user_id={update.effective_user.id}, owner_id={config.telegram_owner_id})")
         return
     
     # Get group ID
     group_id = _get_group_id(update)
+    logger.info(f"[GROUP] group_id={group_id}")
     if not group_id:
         return  # Not a group chat
     
     # Check if group is linked to a project
     project_dir = groups_module.get_project_for_group(group_id)
+    logger.info(f"[GROUP] project_dir={project_dir} for group {group_id}")
     if not project_dir:
         return  # Group not linked
     
     # Detect agent tag
     agent_name, prompt = detect_agent_tag(update.message.text)
+    logger.info(f"[GROUP] agent_name={agent_name}, prompt={prompt[:50] if prompt else 'empty'}")
     if not agent_name or not prompt:
         return  # No valid tag found
     
@@ -358,7 +383,7 @@ async def _execute_agent_prompt(
             parse_mode="Markdown"
         )
         
-    except CursorCLIError as e:
+    except (CursorCLIError, GrokCLIError, ClaudeCLIError, CodexCLIError) as e:
         logger.error(f"[GROUP] @{agent_name} error: {str(e)}")
         await status_msg.edit_text(f"❌ @{agent_name} error: {str(e)}")
     except Exception as e:
@@ -395,7 +420,7 @@ def _build_agent_cli(agent_name: str, project_dir: str):
     
     elif agent_name == "grok":
         # Use Grok CLI wrapper (defaults to API)
-        return GrokCLI(project_dir=project_dir, use_api=True)
+        return GrokCLI(project_dir=project_dir)
     
     else:
         # Default to cursor
